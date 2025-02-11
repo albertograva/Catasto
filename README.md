@@ -11,4 +11,4 @@ il file in uscita è potenzialmente molto pesante.
 
 le azioni richieste all'utente sono: 
 1) dezippare il la cartella scaricata (solo il primo livello)
-2) inserire il percoso della cartella nello script quando richiesto
+2) inserire il percorso della cartella nello script quando richiesto
