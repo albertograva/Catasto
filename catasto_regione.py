@@ -5,13 +5,43 @@ import geopandas as gpd
 from shapely.errors import GEOSException
 import shutil
 
-# Imposta la cartella radice
-root_directory = "percorso cartella radice" ## ad esempio /home/alberto/Qsync/Lavoro/generale/Catasto/VENETO
+# 🔹 Tenta di chiedere il percorso con input(), altrimenti usa una finestra di dialogo in QGIS
+def get_root_directory():
+    try:
+        return input("📂 Inserisci il percorso della cartella radice: ").strip()
+    except EOFError:
+        print("⚠️ Input non disponibile. Provo con una finestra di dialogo (solo in QGIS)...")
+        try:
+            from qgis.PyQt.QtWidgets import QFileDialog
+            root_dir = QFileDialog.getExistingDirectory(None, "Seleziona la cartella radice")
+            if root_dir:
+                return root_dir
+            else:
+                print("❌ Nessuna cartella selezionata. Uscita dallo script.")
+                exit()
+        except ImportError:
+            print("❌ Errore: ambiente non interattivo e QGIS non disponibile.")
+            exit()
 
-# Nome del GPKG finale
-final_gpkg = os.path.join(root_directory, f"{os.path.basename(root_directory)}.gpkg")
+# 📌 Ottiene il percorso della cartella radice
+root_directory = get_root_directory()
 
-# Funzione per estrarre i file GML da ZIP annidati senza creare sottocartelle
+# 📌 Verifica che la cartella esista
+while not os.path.isdir(root_directory):
+    print("❌ Errore: il percorso inserito non esiste. Riprova.")
+    root_directory = get_root_directory()
+
+# 📌 Rimuove eventuali "/" finali
+root_directory = root_directory.rstrip("/")
+
+# 📌 Nome del GPKG finale con il nome della cartella radice
+root_name = os.path.basename(root_directory)
+final_gpkg = os.path.join(root_directory, f"{root_name}.gpkg")
+
+print(f"\n✅ Cartella selezionata: {root_directory}")
+print(f"📁 Il file finale sarà: {final_gpkg}")
+
+# 🔹 Funzione per estrarre i file GML dai ZIP annidati
 def extract_gml_from_nested_zip(zip_path, temp_dir, provincia):
     extracted_files = {"ple": [], "map": []}
 
@@ -19,7 +49,7 @@ def extract_gml_from_nested_zip(zip_path, temp_dir, provincia):
 
     with zipfile.ZipFile(zip_path, 'r') as zip_file:
         for file_name in zip_file.namelist():
-            if file_name.endswith(".zip"):  # ZIP di terzo livello
+            if file_name.endswith(".zip"):  
                 print(f"  📂 Trovato ZIP interno: {file_name}")
                 with zip_file.open(file_name) as nested_zip_file:
                     with zipfile.ZipFile(nested_zip_file, 'r') as nested_zip:
@@ -33,7 +63,7 @@ def extract_gml_from_nested_zip(zip_path, temp_dir, provincia):
 
     return extracted_files
 
-# Funzione per unire i file GML e correggere geometrie corrotte, aggiungendo i nuovi campi
+# 🔹 Funzione per unire i file GML e correggere geometrie corrotte
 def merge_gml(files):
     if not files:
         return None
@@ -43,44 +73,40 @@ def merge_gml(files):
             print(f"  🔄 Unione file: {filename}")
             gdf = gpd.read_file(f)
 
-            # Estrae il nome del comune (testo tra _ nel nome file)
+            # Estrae il nome del comune dal file
             comune = filename.split("_")[1] if "_" in filename else filename
 
-            # Corregge solo le geometrie non valide
+            # Corregge geometrie non valide
             def fix_geometry(geom):
                 if geom is None:
                     return None
                 try:
                     return geom if geom.is_valid else geom.buffer(0)
                 except GEOSException:
-                    return None  # Scarta solo questa geometria
+                    return None  
 
             gdf["geometry"] = gdf["geometry"].apply(fix_geometry)
-            gdf = gdf[gdf["geometry"].notnull()]  # Rimuove solo le geometrie non recuperabili
+            gdf = gdf[gdf["geometry"].notnull()]  
 
             # Aggiunge i nuovi campi
             gdf["comune"] = comune
-            gdf["provincia"] = provincia.upper()  # Ora tutto in maiuscolo
+            gdf["provincia"] = provincia.upper()  
 
             gdfs.append(gdf)
         except Exception as e:
             print(f"❌ Errore nel file {f}: {e}")
 
-    if gdfs:
-        return gpd.pd.concat(gdfs, ignore_index=True)
-    else:
-        print("❌ Nessun dato valido dopo la fusione.")
-        return None
+    return gpd.pd.concat(gdfs, ignore_index=True) if gdfs else None
 
-# Liste per raccogliere i GPKG intermedi
+# 🔹 Lista per raccogliere i GPKG intermedi
 gpkg_files = []
 
-# Scansiona gli ZIP di secondo livello nella cartella radice
+# 🔹 Scansiona gli ZIP di secondo livello nella cartella radice
 for zip_file_name in os.listdir(root_directory):
     if zip_file_name.endswith(".zip"):
         second_level_zip_path = os.path.join(root_directory, zip_file_name)
 
-        # Prende solo le prime due lettere del nome del file ZIP (es. "VE" da "VE_F229.zip") e le mette in maiuscolo
+        # Prende solo le prime due lettere del nome ZIP (es. "VE" da "VE_F229.zip")
         provincia = os.path.splitext(zip_file_name)[0][:2].upper()
 
         print(f"\n📂 Processando: {zip_file_name} (provincia: {provincia})")
@@ -93,14 +119,13 @@ for zip_file_name in os.listdir(root_directory):
             all_gml_files["ple"].extend(extracted_files["ple"])
             all_gml_files["map"].extend(extracted_files["map"])
 
-            # Verifica se ci sono file estratti
             if not all_gml_files["ple"] and not all_gml_files["map"]:
                 print(f"❌ Nessun file .gml trovato in {zip_file_name}. Skip.")
-                continue  # Passa al prossimo ZIP
+                continue  
 
             # Nome del file GPKG di output
             output_gpkg = os.path.join(root_directory, f"{provincia}.gpkg")
-            gpkg_files.append(output_gpkg)  # Salva il nome del GPKG intermedio
+            gpkg_files.append(output_gpkg)  
             print(f"📁 GPKG di destinazione: {output_gpkg}")
 
             ple_layer = merge_gml(all_gml_files["ple"])
@@ -109,16 +134,12 @@ for zip_file_name in os.listdir(root_directory):
             if ple_layer is not None:
                 ple_layer.to_file(output_gpkg, layer="ple_layer", driver="GPKG")
                 print(f"  ✔ Salvato layer 'ple_layer' in {output_gpkg}")
-            else:
-                print("  ❌ Nessun dato valido per 'ple_layer'.")
 
             if map_layer is not None:
                 map_layer.to_file(output_gpkg, layer="map_layer", driver="GPKG")
                 print(f"  ✔ Salvato layer 'map_layer' in {output_gpkg}")
-            else:
-                print("  ❌ Nessun dato valido per 'map_layer'.")
 
-# Fusione finale dei GPKG in un unico GPKG
+# 🔄 Fusione finale dei GPKG in un unico GPKG
 print("\n🔄 Unione di tutti i GPKG in uno solo...")
 
 final_ple_layers = []
@@ -137,7 +158,6 @@ for gpkg in gpkg_files:
     except Exception as e:
         print(f"❌ Nessun layer 'map_layer' in {gpkg}: {e}")
 
-# Se ci sono layer validi, unirli e salvarli nel GPKG finale
 if final_ple_layers:
     final_ple = gpd.pd.concat(final_ple_layers, ignore_index=True)
     final_ple.to_file(final_gpkg, layer="ple_layer", driver="GPKG")
@@ -148,13 +168,9 @@ if final_map_layers:
     final_map.to_file(final_gpkg, layer="map_layer", driver="GPKG")
     print(f"  ✔ Unito 'map_layer' nel GPKG finale: {final_gpkg}")
 
-# Eliminazione dei GPKG intermedi
 for gpkg in gpkg_files:
-    try:
-        os.remove(gpkg)
-        print(f"  🗑️ Eliminato GPKG intermedio: {gpkg}")
-    except Exception as e:
-        print(f"❌ Errore nell'eliminare {gpkg}: {e}")
+    os.remove(gpkg)
+    print(f"  🗑️ Eliminato GPKG intermedio: {gpkg}")
 
 print("\n✅ Processo COMPLETATO! Il file finale è:", final_gpkg)
 
